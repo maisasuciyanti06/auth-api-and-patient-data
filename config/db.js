@@ -38,4 +38,4 @@ const queryDatabase = (sql, params) => {
   });
 };
 
-module.exports = queryDatabase  // Ekspor queryDatabase
+module.exports = queryDatabase;

@@ -1,141 +1,146 @@
-const queryDatabase = require('../config/db'); // Mengimpor koneksi database
-const moment = require('moment-timezone');
+const { Storage } = require('@google-cloud/storage');
+const queryDatabase = require('../config/db');
+const predictClassification = require('../services/prediction');
 
-// Fungsi untuk mengonversi waktu ke WIB
-const convertToWIB = (date) => {
-  return moment(date).tz('Asia/Jakarta').format('YYYY-MM-DD HH:mm:ss');
-};
+// Inisialisasi Google Cloud Storage
+const storage = new Storage();
+const bucketName = process.env.GCS_BUCKET_NAME; // Ganti dengan nama bucket Anda
+const bucket = storage.bucket(bucketName);
 
-// Menyimpan data pasien
-const savePatientData = async (name, age, gender, address, phone_number) => {
-  try {
-    // Validasi untuk memastikan semua data wajib diisi
-    if (!name || !age || !gender || !address || !phone_number) {
-      throw new Error('All fields are required');
-    }
-
-    // Validasi tipe data (opsional, untuk memastikan input sesuai format yang diharapkan)
-    if (typeof name !== 'string' || name.trim() === '') {
-      throw new Error('Name must be a non-empty string');
+// Helper function for validation
+const validatePatientData = (data) => {
+    const { id, name, age, gender } = data;
+    if (!id || !name || !age || !gender) {
+        throw new Error('Required fields missing');
     }
     if (typeof age !== 'number' || age <= 0) {
-      throw new Error('Age must be a positive number');
+        throw new Error('Invalid age');
     }
-    if (!['male', 'female', 'other'].includes(gender.toLowerCase())) {
-      throw new Error("Gender must be one of 'male', 'female', or 'other'");
-    }  
-    if (typeof address !== 'string' || address.trim() === '') {
-      throw new Error('Address must be a non-empty string');
-    }
-    if (typeof phone_number !== 'string' || phone_number.trim() === '') {
-      throw new Error('Phone number must be a non-empty string');
-    }
-
-    // Query untuk menyimpan data ke database menggunakan Promise
-    const result = await queryDatabase(
-      'INSERT INTO patients (name, age, gender, address, phone_number) VALUES (?, ?, ?, ?, ?)',
-      [name, age, gender, address, phone_number]
-    );
-
-    return {
-      message: 'Patient data successfully saved',
-      patientId: result.insertId,
-    };
-  } catch (error) {
-    throw new Error('Failed to save patient data: ' + error.message);
-  }
 };
 
-// Fungsi untuk mengambil semua data pasien
-const getAllPatients = async () => {
-  try {
-    const rows = await queryDatabase('SELECT * FROM patients');
-    return rows; // Mengembalikan semua data pasien
-  } catch (error) {
-    throw new Error('Failed to retrieve all patient data: ' + error.message);
-  }
+// Save patient data
+const savePatientData = async (req, res) => {
+    try {
+        validatePatientData(req.body);
+        await queryDatabase('INSERT INTO patients SET ?', req.body);
+        res.status(201).json({ message: 'Patient data saved successfully' });
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ message: error.message });
+    }
 };
 
-// Mencari data pasien berdasarkan ID atau Nama
-const getPatient = async (id = null, name = null) => {
-  try {
-    // Validasi awal: Salah satu parameter harus diisi
-    if (!id && !name) {
-      throw new Error('Enter patient ID or name to perform a search.');
+// Update patient data
+const updatePatientData = async (req, res) => {
+    try {
+        validatePatientData(req.body);
+        await queryDatabase('UPDATE patients SET ? WHERE id = ?', [req.body, req.body.id]);
+        res.status(200).json({ message: 'Patient data updated successfully' });
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ message: error.message });
     }
-
-    let query = 'SELECT * FROM patients WHERE ';
-    const params = [];
-
-    // Tambahkan kondisi berdasarkan parameter yang diberikan
-    if (id) {
-      query += 'id = ?';
-      params.push(id);
-    } else if (name) {
-      query += 'name = ?';
-      params.push(name);
-    }
-
-    // Eksekusi query
-    const rows = await queryDatabase(query, params);
-
-    // Validasi hasil query
-    if (rows.length === 0) {
-      if (id) {
-        throw new Error(`Patient with ID ${id} not found.`);
-      } else {
-        throw new Error(`Patient with name "${name}" not found.`);
-      }
-    }
-
-    return rows[0]; // Mengembalikan data pasien pertama yang ditemukan
-  } catch (error) {
-    throw new Error('Failed to retrieve patient data: ' + error.message);
-  }
 };
 
-// Update data
-const updatePatientData = async (name, age, gender, address, phone_number) => {
-  try {
-    // Menjalankan query untuk memperbarui data pasien berdasarkan nama
-    const result = await queryDatabase(
-      'UPDATE patients SET name = ?, age = ?, gender = ?, address = ?, phone_number = ? WHERE name = ?',
-      [name, age, gender, address, phone_number, name] // Menyertakan nama sebagai parameter pencarian
-    );
+// Upload patient's X-ray
+const uploadPatientXray = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const file = req.file;
 
-    // Periksa apakah pembaruan berhasil
-    if (result.affectedRows === 0) {
-      return { message: 'Patient data failed to update. Make sure the name is valid and there are changes.' };
+        if (!id || !file) {
+            return res.status(400).json({ message: 'Patient ID and file are required' });
+        }
+
+        const blob = bucket.file(file.originalname);
+        const blobStream = blob.createWriteStream({ resumable: false });
+
+        blobStream.on('error', (err) => {
+            console.error('Error uploading file:', err);
+            res.status(500).json({ message: `Error uploading file: ${err.message}` });
+        });
+
+        blobStream.on('finish', async () => {
+            const publicUrl = `https://storage.googleapis.com/${bucket.name}/${blob.name}`;
+            await queryDatabase('UPDATE patients SET xray_image_url = ? WHERE id = ?', [publicUrl, id]);
+            res.status(200).json({ message: 'X-ray uploaded successfully', url: publicUrl });
+        });
+
+        blobStream.end(file.buffer);
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ message: error.message });
     }
-
-    return { message: 'Patient data successfully updated' };
-
-  } catch (error) {
-    throw new Error('Failed to update patient data: ' + error.message);
-  }
 };
 
-// Fungsi untuk menghapus data pasien
-const deletePatientData = async (name) => {
-  try {
-    // Menghapus data pasien berdasarkan ID
-    const result = await queryDatabase('DELETE FROM patients WHERE name = ?', [name]);
+// Delete patient data
+const deletePatientData = async (req, res) => {
+    try {
+        const { id } = req.params;
+        if (!id) {
+            return res.status(400).json({ message: 'Patient ID is required' });
+        }
 
-    // Periksa apakah penghapusan berhasil
-    if (result.affectedRows === 0) {
-      return { message: 'Patient data failed to delete. Ensure that the ID is valid.' };
+        const patient = await queryDatabase('SELECT xray_image_url FROM patients WHERE id = ?', [id]);
+        if (patient[0]?.xray_image_url) {
+            const fileName = patient[0].xray_image_url.split('/').pop();
+            await bucket.file(fileName).delete();
+        }
+
+        await queryDatabase('DELETE FROM patients WHERE id = ?', [id]);
+        res.status(200).json({ message: 'Patient data deleted successfully' });
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ message: error.message });
     }
+};
 
-    return { message: 'Patient data successfully deleted' };
-  } catch (error) {
-    throw new Error('Failed to delete patient data: ' + error.message);
-  }
+// Get patient data
+const getPatient = async (req, res) => {
+    try {
+        const { id } = req.params;
+        if (!id) {
+            return res.status(400).json({ message: 'Patient ID is required' });
+        }
+
+        const patient = await queryDatabase('SELECT * FROM patients WHERE id = ?', [id]);
+        if (!patient || patient.length === 0) {
+            return res.status(404).json({ message: 'Patient not found' });
+        }
+
+        res.status(200).json({ patient: patient[0] });
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ message: error.message });
+    }
+};
+
+// Invoke model for tumor detection
+const invokeModelHandler = async (req, res) => {
+    try {
+        const { id } = req.params;
+        if (!id) {
+            return res.status(400).json({ message: 'Patient ID is required' });
+        }
+
+        const patient = await queryDatabase('SELECT xray_image_url FROM patients WHERE id = ?', [id]);
+        if (!patient || patient.length === 0 || !patient[0].xray_image_url) {
+            return res.status(404).json({ message: 'X-ray image not found for this patient' });
+        }
+
+        const results = await predictClassification(patient[0].xray_image_url);
+        res.status(200).json({ results });
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ message: error.message });
+    }
 };
 
 module.exports = {
-  savePatientData,
-  getPatient,
-  updatePatientData,
-  deletePatientData,
-  getAllPatients
+    savePatientData,
+    updatePatientData,
+    uploadPatientXray,
+    deletePatientData,
+    getPatient,
+    invokeModelHandler,
 };
