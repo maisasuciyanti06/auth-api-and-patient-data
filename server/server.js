@@ -1,11 +1,12 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
-const authRoutes = require('../routes/authRoutes');
-const patientRoutes = require('../routes/patientRoutes');
+const authRoutes = require('../routes/authRoutes');  // Pastikan jalur file ini benar
+const patientRoutes = require('../routes/patientRoutes'); // Import routes pasien
 const InputError = require('../exceptions/InputError'); // Untuk pengecualian khusus InputError
 
 const app = express();
+const PORT = 4001;
 
 // Middleware CORS
 app.use(cors({
@@ -15,19 +16,9 @@ app.use(cors({
 // Middleware untuk parsing JSON
 app.use(express.json());
 
-// Rute untuk autentikasi
-if (authRoutes) {
-    app.use('/auth', authRoutes);
-} else {
-    console.warn('Auth routes module not found or invalid.');
-}
-
-// Rute untuk pasien
-if (patientRoutes) {
-    app.use('/patients', patientRoutes);
-} else {
-    console.warn('Patient routes module not found or invalid.');
-}
+// Gunakan rute autentikasi
+app.use('/routes', authRoutes);  // Gunakan '/routes' atau sesuaikan dengan jalur yang sesuai
+app.use('/routes', patientRoutes);  // Endpoint pasien, misalnya /patients/{id}, /patients
 
 // Middleware global untuk menangani error
 app.use((err, req, res, next) => {
@@ -66,7 +57,7 @@ app.use((err, req, res, next) => {
 });
 
 // Jalankan server
-const PORT = process.env.PORT || 4000;
 app.listen(PORT, () => {
-    console.log(`Server running on http://localhost:${PORT}`);
+    console.log(`Server berjalan di http://localhost:${PORT}`);
 });
+

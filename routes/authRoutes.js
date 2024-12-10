@@ -1,24 +1,40 @@
+// Import dependencies
 const express = require('express');
+const multer = require('multer');
+const {
+    savePatientData,
+    updatePatientData,
+    uploadPatientXray,
+    deletePatientData,
+    getPatient,
+    invokeModelHandler,
+} = require('../controllers/patientController');
+
+// Set up router and file upload middleware
 const router = express.Router();
+const upload = multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: 10 * 1024 * 1024 }, // Limit file size to 10MB
+});
 
-// Import controller untuk register, login, logout, resetPassword, dll.
-const { 
-  registerDoctorWithEmail,  
-  loginDoctor, 
-  logoutUser, 
-  resetPassword 
-} = require('../controllers/authControllers');
+// Define routes
 
-// Rute untuk register dengan email dan password
-router.post('/register/email', registerDoctorWithEmail); 
+// Save new patient data
+router.post('/patients', savePatientData);
 
-// Rute untuk login menggunakan email atau username dan password
-router.post('/login', loginDoctor);  
+// Update existing patient data
+router.put('/patients/:id', updatePatientData);
 
-// Rute untuk logout
-router.post('/logout', logoutUser);  
+// Upload X-ray for a patient
+router.post('/patients/:id/xray', upload.single('xray'), uploadPatientXray);
 
-// Rute untuk reset password
-router.post('/reset-password', resetPassword); 
+// Delete a patient record
+router.delete('/patients/:id', deletePatientData);
+
+// Get a specific patient's data
+router.get('/patients/:id', getPatient);
+
+// Invoke model for tumor detection
+router.get('/patients/:id/predict', invokeModelHandler);
 
 module.exports = router;
